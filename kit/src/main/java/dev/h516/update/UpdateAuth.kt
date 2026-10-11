@@ -65,8 +65,11 @@ internal class UpdateAuthorization(
 /** 令牌的加密存储：AES/GCM + AndroidKeyStore 里的密钥，换设备就用不了了。 */
 internal class UpdateTokenStore(private val context: Context) {
 
-    private val prefs = context.getSharedPreferences("jiaoban_update_authorization", Context.MODE_PRIVATE)
-    private val alias = "jiaoban-update-v1"
+    private val prefs = context.getSharedPreferences(
+        UpdateConfig.PACKAGE + "_update_authorization",
+        Context.MODE_PRIVATE,
+    )
+    private val alias = UpdateConfig.PACKAGE + "-update-v1"
 
     private fun key(): SecretKey {
         val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
@@ -121,4 +124,3 @@ internal class UpdateTokenStore(private val context: Context) {
         }
     }
 }
-
