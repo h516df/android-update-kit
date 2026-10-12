@@ -2,9 +2,9 @@ name: Release recovery checks
 on:
   push:
     branches: [main]
-    paths: ['scripts/**', 'tools/install_kit.py', 'tests/**', '.github/workflows/release-tools.yml']
+    paths: ['scripts/**', 'tools/install_kit.py', 'tests/**', 'README.md', 'CHANGELOG.md', '.github/workflows/release-tools.yml']
   pull_request:
-    paths: ['scripts/**', 'tools/install_kit.py', 'tests/**', '.github/workflows/release-tools.yml']
+    paths: ['scripts/**', 'tools/install_kit.py', 'tests/**', 'README.md', 'CHANGELOG.md', '.github/workflows/release-tools.yml']
 permissions:
   contents: read
 jobs:
