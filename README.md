@@ -46,11 +46,14 @@ python tools/install_kit.py D:\Projects\你的项目 --repo h516df/你的仓库 
 ## 发布一个版本
 
 ```powershell
-python scripts\publish_release.py
+python scripts\publish_release.py --target <已推送的完整提交SHA> --signer-sha256 <项目原证书公开SHA256>
 ```
 
-它会核对 `build.gradle.kts` 和 `assets/release-notes.json` 的版本号是否一致（不一致直接报错），
-出正式包，生成说明文件和 SHA256，然后挂 release。
+它会核对版本号、实际 APK 包名/版本/正式属性与项目原签名，生成说明文件和 SHA256，固定远端标签到已推送提交，再上传草稿并回读校验后发布。指纹是公开证书指纹，不能传私钥或密码。
+
+已经验收过的包用 `--no-build --prepared-apk <确切APK路径>` 复用，不把最后一次构建自动当成目标包。重复运行会核对原草稿并只上传缺少的文件；同名文件大小/摘要不一致、未知资产、标签提交不一致时停止，不删除或覆盖。已发布版本只读核对；`--verify-only` 显式禁止远端写入，并要求提供已验收包及原目标提交。历史版本核对不会把旧版提升为 latest。
+
+验收：`python -m unittest discover -s tests -v`，只使用隔离 fixture 和模拟 GitHub，不登录账号或写真实发布；实际发布仍须按项目证据核对安装包和目标设备。
 
 ## 目录
 
