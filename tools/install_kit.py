@@ -74,6 +74,7 @@ def main():
     scripts = project / "scripts"
     scripts.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(KIT / "scripts/publish_release.py", scripts / "publish_release.py")
+    shutil.copyfile(KIT / "scripts/release_remote.py", scripts / "release_remote.py")
 
     print("代码和脚本已拷入：%s" % project, flush=True)
     print("\n还要手工做这几件事：", flush=True)

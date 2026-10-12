@@ -17,6 +17,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from release_remote import publish_verified
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
@@ -54,6 +55,24 @@ def version_from_gradle():
     return name.group(1), int(code.group(1))
 
 
+def verify_apk(path, version, code, signer):
+    import os
+    sdk = Path(os.environ.get('ANDROID_HOME') or os.environ.get('ANDROID_SDK_ROOT', ''))
+    candidates = sorted((sdk / 'build-tools').glob('*'), reverse=True)
+    tools = next((p for p in candidates if (p / ('aapt.exe' if sys.platform.startswith('win') else 'aapt')).is_file()), None)
+    if tools is None:
+        raise SystemExit('找不到当前 Android SDK build-tools')
+    config_text = CONFIG.read_text(encoding='utf-8')
+    package = re.search(r'const val PACKAGE\s*=\s*"([^"\n]+)"', config_text).group(1)
+    badging = run([str(tools / ('aapt.exe' if sys.platform.startswith('win') else 'aapt')), 'dump', 'badging', str(path)])
+    if f"package: name='{package}' versionCode='{code}' versionName='{version}'" not in badging or 'application-debuggable' in badging:
+        raise SystemExit('安装包的包名、版本或正式属性不匹配')
+    signature = run([str(tools / ('apksigner.bat' if sys.platform.startswith('win') else 'apksigner')), 'verify', '--print-certs', str(path)])
+    certificates = re.findall(r'Signer #\d+ certificate SHA-256 digest: ([a-fA-F0-9]{64})', signature)
+    if {value.lower() for value in certificates} != {signer}:
+        raise SystemExit('项目原签名不匹配，拒绝发布')
+
+
 def markdown(notes, sha):
     lines = [f"## {notes['versionName']} 更新", "", "**覆盖安装即可，旧数据保留。**", ""]
     for heading in HEADINGS:
@@ -71,7 +90,22 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--no-build", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--verify-only", action="store_true", help="只读核对已发布版本，禁止远端写入")
+    parser.add_argument("--target", help="已经推送的完整提交 SHA")
+    parser.add_argument("--prepared-apk", type=Path, help="已经验收的正式包；--no-build 时必填")
+    parser.add_argument("--signer-sha256", help="项目原签名证书的公开 SHA256 指纹")
     args = parser.parse_args()
+    if args.no_build and args.prepared_apk is None:
+        raise SystemExit("--no-build 必须指定 --prepared-apk，避免误用最后一次构建")
+    if args.verify_only and not args.no_build:
+        raise SystemExit("只读核对必须提供 --no-build --prepared-apk")
+    if not args.dry_run and not re.fullmatch(r'[a-f0-9]{40}', args.target or ''):
+        raise SystemExit("必须指定已推送的完整 --target SHA")
+    if not args.dry_run and not re.fullmatch(r'[a-fA-F0-9]{64}', args.signer_sha256 or ''):
+        raise SystemExit("必须提供项目原签名公开指纹 --signer-sha256")
+    if not args.dry_run and not args.verify_only:
+        if run(['git','rev-parse','HEAD']).strip() != args.target or run(['git','status','--porcelain']).strip():
+            raise SystemExit("发布只允许已提交且干净的确切工作区")
 
     repo, prefix = config()
     version, code = version_from_gradle()
@@ -85,18 +119,21 @@ def main():
     if not args.no_build:
         print("== 出正式包 ==", flush=True)
         run([str(GRADLE), "-p", str(ROOT), ":app:assembleRelease", "--console=plain"])
-    if not APK.is_file():
-        raise SystemExit("没有正式包：" + str(APK))
+    apk = args.prepared_apk if args.no_build else APK
+    if not apk.is_file():
+        raise SystemExit("没有正式包：" + str(apk))
 
-    sha = hashlib.sha256(APK.read_bytes()).hexdigest()
+    if not args.dry_run:
+        verify_apk(apk, version, code, args.signer_sha256.lower())
+    sha = hashlib.sha256(apk.read_bytes()).hexdigest()
     out = DIST / f"v{version}"
     out.mkdir(parents=True, exist_ok=True)
     apk_out = out / f"{prefix}-v{version}-universal.apk"
     notes_out = out / f"{prefix}-v{version}-release-notes.json"
     sha_out = out / f"{prefix}-v{version}-SHA256.txt"
-    shutil.copyfile(APK, apk_out)
+    shutil.copyfile(apk, apk_out)
     shutil.copyfile(NOTES, notes_out)
-    sha_out.write_text(f"{sha}  app-release.apk\n", encoding="utf-8")
+    sha_out.write_text(f"{sha}  {apk_out.name}\n", encoding="utf-8")
 
     for f in (apk_out, notes_out, sha_out):
         print("  %s  %d bytes" % (f.name, f.stat().st_size), flush=True)
@@ -106,18 +143,9 @@ def main():
 
     title = "v%s｜%s" % (version, (notes.get("新增") or ["小改动"])[0][:24])
     body = markdown(notes, sha)
-    existing = subprocess.run(
-        ["gh", "release", "view", f"v{version}", "--repo", repo],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-    ).returncode == 0
-    if existing:
-        run(["gh", "release", "upload", f"v{version}", str(apk_out), str(notes_out), str(sha_out),
-             "--repo", repo, "--clobber"])
-        run(["gh", "release", "edit", f"v{version}", "--repo", repo, "--title", title, "--notes", body])
-    else:
-        run(["gh", "release", "create", f"v{version}", str(apk_out), str(notes_out), str(sha_out),
-             "--repo", repo, "--title", title, "--notes", body])
-    print("已发布 v%s 到 %s" % (version, repo), flush=True)
+    receipt = publish_verified(repo, f'v{version}', args.target, title, body,
+        [apk_out, notes_out, sha_out], out, run, verify_only=args.verify_only)
+    print(json.dumps(receipt, ensure_ascii=False), flush=True)
     return 0
 
 
