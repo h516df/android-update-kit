@@ -34,7 +34,11 @@ tag 必须形如 `v0.3`；`versionCode` 必须比装着的版本大；APK 必须
 python tools/install_kit.py D:\Projects\你的项目 --repo h516df/你的仓库 --package cn.你的包名 --prefix 你的前缀 --name 你的仓库名
 ```
 
-脚本会把源码拷进去、替换好配置、并把发布脚本放进 `scripts\`，然后打印剩下的手工步骤（就下面这几条）：
+脚本先核对配置、全部源文件与目标路径，再把新文件接入项目；相同文件直接跳过，已有版本说明保留。剩余步骤由实现 Agent 完成并验收，不交给用户执行。
+
+已有 Kotlin、XML 或发布脚本与 kit 不同时，会列出冲突并在写入前停止；不提供强制覆盖选项。由 Agent 在项目分支比较、备份并合并所需变化，保留项目定制。仓库查询失败或 id 无效也会停止，不能生成 `REPO_ID = 0L` 的配置。已核实的数字 id 可用 `--repo-id` 传入。
+
+重复接入不改相同文件的内容或修改时间；安装因磁盘/进程故障中断时可能留下部分新增文件，核对后用相同参数接续。目标若被另一个写手创建则停止，已有文件不覆盖。链接与 Windows junction 不作为写入入口；项目仍须按单写手/独立工作树规则操作。复制成功只代表工具接入，App 的授权、下载和覆盖升级仍需真实入口验收。
 
 1. `app/build.gradle.kts`：`implementation("androidx.core:core-ktx:1.18.0")`（FileProvider 要用）
 2. `AndroidManifest.xml`：加 `INTERNET`、`REQUEST_INSTALL_PACKAGES` 两个权限
@@ -68,4 +72,4 @@ scripts/publish_release.py            发布（参数化版本）
 
 - **不要**把 client secret、PAT、登录 cookie、签名私钥写进代码或资源
 - 升级必须同一个签名；换签名会让用户必须卸载重装（数据会丢）
-- 这个 kit 的代码是从项目里拷出来的一份，改了 kit 记得同步回项目（或者重新跑一次 install_kit）
+- 项目接入的是源码快照；在项目现有 HANDOFF/PR 记录 kit 完整提交 SHA。更新 kit 后由项目负责人比较并合并，不能盲目覆盖已接入项目。
