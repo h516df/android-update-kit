@@ -9,9 +9,72 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.request
+import urllib.error
 from urllib.parse import quote, urlsplit, parse_qs
 
 CURL = shutil.which('curl.exe' if sys.platform == 'win32' else 'curl') or 'curl'
+
+
+def memory_headers(auth_config):
+    if not auth_config:return {}
+    match=re.fullmatch(r'header = "Authorization: (Bearer [^"\r\n]+)"\n',auth_config)
+    if not match:raise RuntimeError('认证管道格式不正确')
+    return {'Authorization':match[1]}
+
+
+def secure_opener(env,asset_redirects=False):
+    proxies={scheme:value for scheme in ('http','https')
+             if (value:=env.get(scheme.upper()+'_PROXY') or env.get(scheme+'_proxy'))}
+    class Redirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self,req,fp,code,msg,headers,newurl):
+            u=urlsplit(newurl)
+            if not asset_redirects or u.scheme!='https' or u.hostname not in (
+                'release-assets.githubusercontent.com','objects.githubusercontent.com','github-releases.githubusercontent.com') or u.username or u.port not in (None,443):
+                return None
+            new=super().redirect_request(req,fp,code,msg,headers,newurl)
+            if new:new.remove_header('Authorization')
+            return new
+    return urllib.request.build_opener(urllib.request.ProxyHandler(proxies),Redirect())
+
+
+def urllib_metadata(url,auth_config,env):
+    headers={'Accept':'application/vnd.github+json','User-Agent':'android-update-kit',**memory_headers(auth_config)}
+    for attempt in range(2):
+        try:
+            with secure_opener(env).open(urllib.request.Request(url,headers=headers),timeout=45) as response:
+                value=response.read(8*1024*1024+1)
+                if len(value)>8*1024*1024:raise RuntimeError('元数据响应过大')
+                return value.decode('utf-8')
+        except urllib.error.HTTPError as error:
+            if attempt or error.code not in (429,500,502,503,504):break
+        except (OSError,urllib.error.URLError):
+            if attempt:break
+        time.sleep(1)
+    raise RuntimeError('备用元数据读取失败；不输出认证或临时地址') from None
+
+
+def stream_download(url,partial,identity,auth_config,env,before,stall,deadline,notify):
+    headers={'Accept':'application/octet-stream','User-Agent':'android-update-kit',**memory_headers(auth_config)}
+    if before:headers['Range']=f'bytes={before}-'
+    started=announced=time.monotonic();count=before
+    try:
+        with secure_opener(env,asset_redirects=True).open(urllib.request.Request(url,headers=headers),timeout=stall) as response:
+            if before and (response.status!=206 or not response.headers.get('Content-Range','').startswith(f'bytes {before}-')):
+                raise RuntimeError('服务器未确认接续范围，保留原部分文件')
+            with partial.open('ab') as file:
+                while True:
+                    now=time.monotonic()
+                    if now-started>deadline:raise RuntimeError('下载达到总时限，保留部分文件')
+                    block=response.read1(65536)
+                    if not block:break
+                    count+=len(block)
+                    if count>identity['size']:raise RuntimeError('下载超出目标大小')
+                    file.write(block)
+                    if now-announced>=30:
+                        notify(f'下载 {partial.name}: {count:,}/{identity["size"]:,} 字节（流式传输）');announced=now
+    except (OSError,urllib.error.URLError):
+        raise RuntimeError('备用下载中断，保留可接续部分；不输出临时地址') from None
 
 
 
@@ -102,7 +165,7 @@ def curl_upload(url, path, auth_config, env, *, stall=60, deadline=None, notify=
     return measured, body
 
 
-def curl_download(url, path, identity, auth_config, env, *, stall=60, deadline=None, notify=print):
+def curl_download(url, path, identity, auth_config, env, *, stall=60, deadline=None, notify=print, backend='curl'):
     """Resume only an owned partial of this exact asset. Never overwrite a complete file."""
     path=Path(path)
     path.parent.mkdir(parents=True,exist_ok=True)
@@ -121,7 +184,10 @@ def curl_download(url, path, identity, auth_config, env, *, stall=60, deadline=N
     if before>identity['size']:
         raise RuntimeError('部分下载超出目标大小')
     deadline=deadline or min(7200,max(900,int(identity['size']/32768)+120))
-    if before<identity['size']:
+    if backend not in ('curl','urllib'):raise ValueError('Unknown read transport')
+    if before<identity['size'] and backend=='urllib':
+        stream_download(url,partial,identity,auth_config,env,before,stall,deadline,notify)
+    if before<identity['size'] and backend=='curl':
         command=[CURL,'--config','-','--http1.1','--location','--fail','--silent','--show-error',
             '--header','Accept: application/octet-stream','--continue-at','-',
             '--output',str(partial),'--connect-timeout','10','--max-time',str(deadline),
@@ -155,9 +221,53 @@ def curl_download(url, path, identity, auth_config, env, *, stall=60, deadline=N
             'resumedFromBytes':before,'size':identity['size'],'sha256':identity['sha256']}
 
 
+def urllib_upload(url,path,auth_config,env,*,stall=60,deadline=None,notify=print):
+    """Explicit alternative streaming transport. No automatic upload retries."""
+    size=path.stat().st_size
+    deadline=deadline or min(7200,max(900,int(size/32768)+120))
+    started=announced=time.monotonic();sent=0
+    headers={'Content-Type':'application/octet-stream','Content-Length':str(size),
+             'Accept':'application/vnd.github+json','User-Agent':'android-update-kit'}
+    if auth_config:
+        match=re.fullmatch(r'header = "Authorization: (Bearer [^"\r\n]+)"\n',auth_config)
+        if not match:raise RuntimeError('认证管道格式不正确')
+        headers['Authorization']=match[1]
+    proxies={}
+    for scheme in ('http','https'):
+        value=env.get(scheme.upper()+'_PROXY') or env.get(scheme+'_proxy')
+        if value:proxies[scheme]=value
+    class NoRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self,*args,**kwargs):return None
+    opener=urllib.request.build_opener(urllib.request.ProxyHandler(proxies),NoRedirect())
+    class Reader:
+        def __init__(self,file):self.file=file
+        def read(self,n=-1):
+            nonlocal sent,announced
+            now=time.monotonic()
+            if now-started>deadline:raise TimeoutError('传输达到总时限')
+            data=self.file.read(n);sent+=len(data)
+            if now-announced>=30:
+                notify(f'上传 {path.name}: {sent:,}/{size:,} 字节（流式传输）');announced=now
+            return data
+    code='unknown';body='';reason=None
+    try:
+        with path.open('rb') as file:
+            request=urllib.request.Request(url,data=Reader(file),headers=headers,method='POST')
+            with opener.open(request,timeout=stall) as response:
+                code=str(response.status);body=response.read(1024*1024).decode('utf-8',errors='replace')
+    except urllib.error.HTTPError as error:code=str(error.code)
+    except (OSError,urllib.error.URLError):reason='传输中断；必须回读远端后决定后续操作'
+    seconds=time.monotonic()-started
+    measured={'status':code,'bytesRead':sent,'seconds':round(seconds,2),'rate':round(sent/max(seconds,.001)),
+              'stopped':reason,'transport':'urllib'}
+    notify(json.dumps(measured,ensure_ascii=False));return measured,body
+
+
 class Runner:
-    def __init__(self, env, notify=print):
+    def __init__(self, env, notify=print, upload_transport='curl'):
         self.env, self.notify = env, notify
+        if upload_transport not in ('curl','urllib'):raise ValueError('Unknown upload transport')
+        self.upload_transport=upload_transport
         self.mutations = 0
         self.upload_attempts = 0
 
@@ -189,14 +299,21 @@ class Runner:
             for page in range(1,101):
                 suffix=('&' if '?' in endpoint else '?')+f'page={page}' if paginate else ''
                 url='https://api.github.com/'+endpoint+suffix
-                command=[CURL,'--config','-','--http1.1','--compressed','--silent','--show-error',
-                    '--connect-timeout','10','--max-time','90','--header','Accept: application/vnd.github+json',
-                    '--write-out','\n%{http_code}',url]
-                result=subprocess.run(command,input=auth,env=self.env,capture_output=True,text=True,
-                    encoding='utf-8',errors='replace',timeout=95)
-                body,_,status=result.stdout.rpartition('\n')
-                if result.returncode or not status.startswith('2'):
-                    raise RuntimeError(f'GitHub 元数据读取失败（HTTP {status or "unknown"}，curl {result.returncode}）；不输出原始响应')
+                if self.upload_transport=='urllib':
+                    body=urllib_metadata(url,auth,self.env)
+                else:
+                    command=[CURL,'--config','-','--http1.1','--compressed','--silent','--show-error',
+                        '--connect-timeout','10','--max-time','90','--header','Accept: application/vnd.github+json',
+                        '--write-out','\n%{http_code}',url]
+                    for attempt in range(2):
+                        result=subprocess.run(command,input=auth,env=self.env,capture_output=True,text=True,
+                            encoding='utf-8',errors='replace',timeout=95)
+                        body,_,status=result.stdout.rpartition('\n')
+                        if not result.returncode and status.startswith('2'):break
+                        transient=result.returncode in (5,6,7,18,28,35,52,55,56) or status in ('429','500','502','503','504')
+                        if attempt or not transient:
+                            raise RuntimeError(f'GitHub 元数据读取失败（HTTP {status or "unknown"}，curl {result.returncode}）；不输出原始响应')
+                        time.sleep(1)
                 if not paginate:
                     return body
                 value=json.loads(body)
@@ -228,7 +345,7 @@ class Runner:
                 else:
                     url=f'https://api.github.com/repos/{repo}/releases/assets/{int(asset["id"])}'
                 identity={'repo':repo,'tag':tag,'assetId':asset['id'],'size':asset['size'],'sha256':expected}
-                reports.append(curl_download(url,Path(output)/path.name,identity,auth,self.env,notify=self.notify))
+                reports.append(curl_download(url,Path(output)/path.name,identity,auth,self.env,notify=self.notify,backend=self.upload_transport))
         finally:del auth
         return reports
 
@@ -258,7 +375,8 @@ class Runner:
         self.mutations += 1
         self.upload_attempts += 1
         try:
-            measured, _ = curl_upload(url, path, auth, self.env, notify=self.notify)
+            transfer=urllib_upload if self.upload_transport=='urllib' else curl_upload
+            measured, _ = transfer(url, path, auth, self.env, notify=self.notify)
         except (OSError, subprocess.SubprocessError):
             measured = {'status': 'unknown'}
         finally:

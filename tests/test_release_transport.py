@@ -90,6 +90,12 @@ class TransferChecks(unittest.TestCase):
         self.assertNotEqual('201', measured['status'])
         self.assertEqual('传输进度长时间未增加', measured['stopped'])
 
+    def test_explicit_streaming_alternative_delivers_exact_bytes(self):
+        url,received,env=self.server()
+        measured,body=runner.urllib_upload(url,self.file,'',env,stall=5,deadline=10,notify=lambda _:None)
+        self.assertEqual([self.file.read_bytes()],received)
+        self.assertEqual('201',measured['status']);self.assertTrue(json.loads(body)['ok'])
+
     def test_uncertain_upload_rechecks_remote_and_accepts_only_matching_asset(self):
         instance = runner.Runner({}, notify=lambda _: None)
         expected = {'name': self.file.name, 'state': 'uploaded', 'size': self.file.stat().st_size,

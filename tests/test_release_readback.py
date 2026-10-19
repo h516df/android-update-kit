@@ -7,6 +7,7 @@ import sys
 import tempfile
 import threading
 import unittest
+import urllib.request
 from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
 from unittest.mock import patch
 
@@ -66,6 +67,14 @@ class ReadbackTests(unittest.TestCase):
             transport.curl_download(url,self.path,identity,'',self.env,deadline=10)
         self.assertFalse(self.path.exists())
 
+    def test_alternative_readback_honors_range_and_verifies_bytes(self):
+        url,requests=self.server()
+        self.path.with_name(self.path.name+'.part').write_bytes(self.content[:2000])
+        self.path.with_name(self.path.name+'.part.json').write_text(json.dumps(self.identity))
+        result=transport.curl_download(url,self.path,self.identity,'',self.env,backend='urllib',deadline=10)
+        self.assertEqual([2000],requests);self.assertEqual(self.content,self.path.read_bytes())
+        self.assertEqual(2000,result['resumedFromBytes'])
+
     def test_manifest_defaults_read_only_and_checks_local_hash_first(self):
         self.path.write_bytes(self.content)
         manifest=self.path.parent/'release.json'
@@ -81,5 +90,27 @@ class ReadbackTests(unittest.TestCase):
         with patch.object(release_assets,'Runner') as runner:
             with self.assertRaisesRegex(RuntimeError,'发生变化'):release_assets.execute(manifest,output,publish=True)
             runner.assert_not_called()
+
+    @unittest.skipUnless(os.name=='nt','Windows filename canonicalization')
+    def test_manifest_preserves_declared_asset_case_on_windows(self):
+        upper=self.path.parent/'App.apk';upper.write_bytes(self.content)
+        manifest=self.path.parent/'release.json'
+        manifest.write_text(json.dumps({'repo':'owner/app','tag':'v1.0','target':'a'*40,'title':'t','body':'b',
+            'assets':[{'path':'app.apk','sha256':self.identity['sha256']}]}))
+        output=self.path.parent/'state';output.mkdir()
+        with patch.object(release_assets,'publish_verified',return_value={}) as publish:
+            release_assets.execute(manifest,output)
+            self.assertEqual('app.apk',publish.call_args.args[5][0].name)
+
+    def test_redirects_strip_auth_and_uploads_never_follow(self):
+        request=urllib.request.Request('https://api.github.com/repos/owner/app/releases/assets/1',headers={'Authorization':'Bearer fixture'})
+        opener=transport.secure_opener({},asset_redirects=True)
+        handler=next(h for h in opener.handlers if isinstance(h,urllib.request.HTTPRedirectHandler))
+        redirected=handler.redirect_request(request,None,302,'',{},'https://release-assets.githubusercontent.com/example')
+        self.assertIsNone(redirected.get_header('Authorization'))
+        self.assertIsNone(handler.redirect_request(request,None,302,'',{},'https://unrelated.invalid/example'))
+        upload=transport.secure_opener({})
+        blocked=next(h for h in upload.handlers if isinstance(h,urllib.request.HTTPRedirectHandler))
+        self.assertIsNone(blocked.redirect_request(request,None,302,'',{},'https://release-assets.githubusercontent.com/example'))
 
 if __name__=='__main__':unittest.main()
