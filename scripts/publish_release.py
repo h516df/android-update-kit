@@ -18,6 +18,9 @@ import subprocess
 import sys
 from pathlib import Path
 from release_remote import publish_verified
+from release_transport import Runner, local_proxy
+import os
+TRANSPORT = Runner(local_proxy(os.environ))
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
@@ -31,6 +34,8 @@ HEADINGS = ["新增", "改进", "修复", "说明"]
 
 
 def run(argv, timeout=2400):
+    if argv and argv[0] == "gh":
+        return TRANSPORT(argv)
     proc = subprocess.run(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=timeout)
     out = proc.stdout.decode("utf-8", "replace")
     if proc.returncode != 0:
@@ -90,6 +95,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--no-build", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--public-release", action="store_true", help="显式选择既有公开发行仓库；不修改可见性")
     parser.add_argument("--verify-only", action="store_true", help="只读核对已发布版本，禁止远端写入")
     parser.add_argument("--target", help="已经推送的完整提交 SHA")
     parser.add_argument("--prepared-apk", type=Path, help="已经验收的正式包；--no-build 时必填")
@@ -144,7 +150,7 @@ def main():
     title = "v%s｜%s" % (version, (notes.get("新增") or ["小改动"])[0][:24])
     body = markdown(notes, sha)
     receipt = publish_verified(repo, f'v{version}', args.target, title, body,
-        [apk_out, notes_out, sha_out], out, run, verify_only=args.verify_only)
+        [apk_out, notes_out, sha_out], out, run, verify_only=args.verify_only, public_release=args.public_release)
     print(json.dumps(receipt, ensure_ascii=False), flush=True)
     return 0
 

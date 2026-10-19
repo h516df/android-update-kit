@@ -157,12 +157,31 @@ class ReleaseRecoveryTest(unittest.TestCase):
             self.publish(fake)
         self.assertEqual([], fake.writes)
 
+    def test_explicit_public_mode_and_mismatched_visibility(self):
+        fake = FakeGitHub(self.assets)
+        fake.private = False
+        result = remote.publish_verified('owner/app','v1.0',TARGET,'title','notes',self.assets,
+            self.root/'public',fake,public_release=True)
+        self.assertEqual('published',result['status'])
+        private = FakeGitHub(self.assets)
+        with self.assertRaisesRegex(RuntimeError,'公开仓库'):
+            remote.publish_verified('owner/app','v1.0',TARGET,'title','notes',self.assets,
+                self.root/'private',private,public_release=True)
+        self.assertEqual([],private.writes)
+
     def test_different_release_commit_is_never_modified(self):
         fake = FakeGitHub(self.assets, self.release(), [self.ref])
         fake.release['target_commitish'] = 'b' * 40
         with self.assertRaisesRegex(RuntimeError, '其他提交'):
             self.publish(fake)
         self.assertEqual([], fake.writes)
+
+    def test_new_release_cannot_go_backwards(self):
+        fake=FakeGitHub(self.assets,self.release(False))
+        fake.release['tag_name']='v2.0'
+        with self.assertRaisesRegex(RuntimeError,'倒退'):
+            self.publish(fake)
+        self.assertEqual([],fake.writes)
 
     def test_uncertain_upload_recovers_from_server_state(self):
         fake = FakeGitHub(self.assets, self.release(), [self.ref])
