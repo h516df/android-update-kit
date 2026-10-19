@@ -50,7 +50,7 @@ def publish_verified(repo, tag, target, title, body, assets, output, run, verify
     require(metadata.get('private') is (not public_release),
             '仅允许已确认的公开仓库' if public_release else '仅允许原私有仓库；公开发布需显式指定模式')
     require(get(f'commits/{target}').get('sha') == target, '远端提交不匹配')
-    pages = get('releases?per_page=100', '--paginate', '--slurp')
+    pages = get('releases?per_page=20', '--paginate', '--slurp')
     require(isinstance(pages, list) and all(isinstance(p, list) for p in pages), '发布列表格式异常')
     matches = [r for page in pages for r in page if r.get('tag_name') == tag]
     require(len(matches) <= 1, '发现重复版本，停止')

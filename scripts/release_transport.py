@@ -9,7 +9,7 @@ import subprocess
 import sys
 import threading
 import time
-from urllib.parse import quote, urlsplit
+from urllib.parse import quote, urlsplit, parse_qs
 
 CURL = shutil.which('curl.exe' if sys.platform == 'win32' else 'curl') or 'curl'
 
@@ -181,6 +181,8 @@ class Runner:
         if not endpoint.startswith('repos/') or '://' in endpoint or '\n' in endpoint:
             raise RuntimeError('只支持明确仓库的 GitHub REST 读取')
         paginate='--paginate' in argv
+        page_size=int(parse_qs(urlsplit('https://api.github.com/'+endpoint).query).get('per_page',['30'])[0])
+        if not 1<=page_size<=100:raise RuntimeError('分页大小不合法')
         pages=[]
         auth=self.auth_config()
         try:
@@ -201,7 +203,7 @@ class Runner:
                 if not isinstance(value,list):
                     raise RuntimeError('分页响应不是列表')
                 pages.append(value)
-                if len(value)<100:
+                if len(value)<page_size:
                     return json.dumps(pages if '--slurp' in argv else [item for batch in pages for item in batch])
             raise RuntimeError('分页达到安全上限')
         finally:
@@ -242,7 +244,7 @@ class Runner:
         size = path.stat().st_size
         # Drafts are not reliably returned by the tag endpoint. List them with the
         # authenticated releases API, then upload only to the exact matching draft.
-        pages = json.loads(self.gh(['gh','api',f'repos/{repo}/releases?per_page=100','--paginate','--slurp']))
+        pages = json.loads(self.gh(['gh','api',f'repos/{repo}/releases?per_page=20','--paginate','--slurp']))
         matches=[r for page in pages for r in page if r.get('tag_name')==tag]
         if len(matches)!=1:raise RuntimeError('草稿版本身份不明确')
         release=matches[0]
@@ -268,4 +270,3 @@ class Runner:
                 and found[0].get('size') == size and found[0].get('digest') == expected):
             return ''
         raise RuntimeError(f'上传未获完整资产确认（HTTP {measured["status"]}）；保留草稿和已有资产，不自动重传或删除')
-
