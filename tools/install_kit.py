@@ -67,7 +67,7 @@ def install_plan(project, repo, repo_id, package, prefix, name):
                 text = text.replace(old, new)
         plan[project / 'app/src/main/java/dev/h516/update' / source.name] = text.encode('utf-8')
     for relative in ('kit/src/main/res/xml/update_paths.xml',
-                     'scripts/publish_release.py', 'scripts/release_remote.py'):
+                     'scripts/publish_release.py', 'scripts/release_remote.py', 'scripts/release_transport.py', 'scripts/release_assets.py'):
         target = relative.removeprefix('kit/src/main/')
         if relative.startswith('kit/'):
             target = 'app/src/main/' + target

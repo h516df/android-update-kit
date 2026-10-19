@@ -49,6 +49,25 @@ python tools/install_kit.py D:\Projects\你的项目 --repo h516df/你的仓库 
 
 ## 发布一个版本
 
+### 本机全局入口与多项目交付
+
+维护源是 `D:\Projects\android-update-kit`。Windows 与 Linux 共用同一套发布状态机和原生 curl 传输；安装器也会带入这些脚本。已经接入的 App 仍须比较源码快照，不能覆盖项目定制。
+
+对于已在最终合并提交上完成包名、版本、原签名、架构和秘密检查的产物，可以直接使用全局入口，无需再构建或复制另一套发布脚本：
+
+```powershell
+python D:\Projects\android-update-kit\scripts\release_assets.py --manifest <release.json>
+python D:\Projects\android-update-kit\scripts\release_assets.py --manifest <release.json> --publish --verify-downloads
+```
+
+第一条默认只读，版本不存在时停止。第二条显式发布，并实际下载附件比较字节数与 SHA256；公开仓库额外加 `--public-release`。此开关只核对原仓库可见性，不修改可见性。
+
+清单包含 `repo`、`tag`、完整最终提交 `target`、中文 `title`/`body`，以及 `assets: [{"path":"相对清单路径的文件","sha256":"64位摘要"}]`。清单只指向已验收的 APK、中文版本说明和校验文件，不含认证或签名材料；该入口本身不代替 APK 验收。不能用旧包配新提交。
+
+传输优先复用既有进程代理；Windows 仅在没有进程代理时复用无凭据的本机回环系统代理，不改变 VPN 或系统网络设置。认证通过既有 `gh` 登录在进程管道中交给 curl，不进入参数、文件或日志。上传每 30 秒报告进度，停滞时停止自己的传输子进程，再查询远端状态；不会盲重传，也不删除失败占位。附件较大时有按体积计算的有限总时限。
+
+下载保留带资产 ID、大小和摘要归属的 `.part` 文件，可接续同一资产；未知部分文件和冲突成品保留并停止。回执区分本次实际下载与已校验缓存。发布元数据一致、实际下载通过、App 更新源可达和手机系统覆盖安装是不同证据；前两项不能宣称手机安装和数据保留已经实测。私有源的电脑登录可达也不能代替 App 内设备授权验收。
+
 ```powershell
 python scripts\publish_release.py --target <已推送的完整提交SHA> --signer-sha256 <项目原证书公开SHA256>
 ```
