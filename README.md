@@ -70,6 +70,8 @@ python D:\Projects\android-update-kit\scripts\release_assets.py --manifest <rele
 
 下载保留带资产 ID、大小和摘要归属的 `.part` 文件，可接续同一资产；未知部分文件和冲突成品保留并停止。回执区分本次实际下载与已校验缓存。发布元数据一致、实际下载通过、App 更新源可达和手机系统覆盖安装是不同证据；前两项不能宣称手机安装和数据保留已经实测。私有源的电脑登录可达也不能代替 App 内设备授权验收。
 
+大文件反复整包中断时，按 [仓库内分段接续与云端验包发布](docs/network-recovery.md) 处理。通用校验模板位于 `templates/verify-carried-release.py`；它使用已有共享发布模块，不在云端重新构建或签名，不进入正式源码分支。
+
 ```powershell
 python scripts\publish_release.py --target <已推送的完整提交SHA> --signer-sha256 <项目原证书公开SHA256>
 ```
