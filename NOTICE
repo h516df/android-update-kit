@@ -1,0 +1,14 @@
+android-update-kit
+
+The MIT license in LICENSE applies only to original material for which the
+copyright holders have the right to grant that license. It does not replace
+licenses of external SDKs, libraries, tools, or services.
+
+Android SDK APIs, AndroidX Compose/Core APIs, Java/Javax APIs, and the Android
+platform org.json API are supplied by the consuming application/toolchain.
+Their original licenses and applicable notices must be preserved by any
+consuming application or redistribution.
+
+External build/release tools and GitHub Actions retain their own licenses.
+This notice does not grant rights to third-party trademarks, private
+application source, signing material, release assets, or user data.
