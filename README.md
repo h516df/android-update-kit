@@ -96,3 +96,7 @@ scripts/publish_release.py            发布（参数化版本）
 - **不要**把 client secret、PAT、登录 cookie、签名私钥写进代码或资源
 - 升级必须同一个签名；换签名会让用户必须卸载重装（数据会丢）
 - 项目接入的是源码快照；在项目现有 HANDOFF/PR 记录 kit 完整提交 SHA。更新 kit 后由项目负责人比较并合并，不能盲目覆盖已接入项目。
+
+## 云端开发入口
+
+后续开发默认使用云端：[打开开发工作区](https://codespaces.new/h516df/android-update-kit) · [环境、检查命令与迁移边界](CLOUD_DEVELOPMENT.md)。
