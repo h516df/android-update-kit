@@ -35,7 +35,7 @@ tag 必须形如 `v0.3`；`versionCode` 必须比装着的版本大；APK 必须
 ## 接入一个项目（6 步）
 
 ```powershell
-python tools/install_kit.py D:\Projects\你的项目 --repo h516df/你的仓库 --package cn.你的包名 --prefix 你的前缀 --name 你的仓库名
+python tools/install_kit.py <你的项目目录> --repo h516df/你的仓库 --package cn.你的包名 --prefix 你的前缀 --name 你的仓库名
 ```
 
 脚本先核对配置、全部源文件与目标路径，再把新文件接入项目；相同文件直接跳过，已有版本说明保留。剩余步骤由实现 Agent 完成并验收，不交给用户执行。
@@ -55,13 +55,13 @@ python tools/install_kit.py D:\Projects\你的项目 --repo h516df/你的仓库 
 
 ### 本机全局入口与多项目交付
 
-维护源是 `D:\Projects\android-update-kit`。Windows 与 Linux 共用同一套发布状态机和原生 curl 传输；安装器也会带入这些脚本。已经接入的 App 仍须比较源码快照，不能覆盖项目定制。
+维护源是 `仓库根目录`。Windows 与 Linux 共用同一套发布状态机和原生 curl 传输；安装器也会带入这些脚本。已经接入的 App 仍须比较源码快照，不能覆盖项目定制。
 
 对于已在最终合并提交上完成包名、版本、原签名、架构和秘密检查的产物，可以直接使用全局入口，无需再构建或复制另一套发布脚本：
 
 ```powershell
-python D:\Projects\android-update-kit\scripts\release_assets.py --manifest <release.json>
-python D:\Projects\android-update-kit\scripts\release_assets.py --manifest <release.json> --publish --verify-downloads
+python scripts/release_assets.py --manifest <release.json>
+python scripts/release_assets.py --manifest <release.json> --publish --verify-downloads
 ```
 
 第一条默认只读，版本不存在时停止。第二条显式发布，并实际下载附件比较字节数与 SHA256；公开仓库额外加 `--public-release`。此开关只核对原仓库可见性，不修改可见性。
