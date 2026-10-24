@@ -24,7 +24,8 @@ def write_audit(output, result):
         if temporary and temporary.exists():temporary.unlink()
 
 
-def execute(manifest_path, output=None, publish=False, public_release=False, verify_downloads=False, upload_transport='curl'):
+def execute(manifest_path, output=None, publish=False, public_release=False, verify_downloads=False, upload_transport='curl', *,
+            metadata_transport=None, download_transport=None, write_transport='gh'):
     manifest_path=Path(manifest_path).resolve()
     spec=json.loads(manifest_path.read_text(encoding='utf-8-sig'))
     assets=[]
@@ -51,9 +52,16 @@ def execute(manifest_path, output=None, publish=False, public_release=False, ver
                       uploadAttempts=runner.upload_attempts if runner else 0,
                       nativeCurlUploadAttempts=runner.upload_attempts if runner and upload_transport=='curl' else 0,
                       uploadTransport=upload_transport,
+                      metadataTransport=upload_transport if metadata_transport is None else metadata_transport,
+                      downloadTransport=upload_transport if download_transport is None else download_transport,
+                      writeTransport=write_transport,
                       downloadPerformedThisRun=any(row['downloadedThisRun'] for row in result['downloads']))
     try:
-        runner=Runner(local_proxy(os.environ),upload_transport=upload_transport)
+        overrides={}
+        if metadata_transport is not None:overrides['metadata_transport']=metadata_transport
+        if download_transport is not None:overrides['download_transport']=download_transport
+        if write_transport!='gh':overrides['write_transport']=write_transport
+        runner=Runner(local_proxy(os.environ),upload_transport=upload_transport,**overrides)
         publication=publish_verified(spec['repo'],spec['tag'],spec['target'],spec['title'],spec['body'],
             assets,output,runner,verify_only=not publish,public_release=public_release)
         result.update(publication)
@@ -85,9 +93,14 @@ if __name__=='__main__':
     parser.add_argument('--public-release',action='store_true')
     parser.add_argument('--verify-downloads',action='store_true',help='实际下载并按本地已验收资产核验；支持接续自己的部分下载')
     parser.add_argument('--transport','--upload-transport',dest='upload_transport',choices=['curl','urllib'],default='curl',help='显式选择元数据、上传及回读传输；不自动重传')
+    parser.add_argument('--metadata-transport',choices=['curl','urllib'],help='仅覆盖只读元数据传输')
+    parser.add_argument('--download-transport',choices=['curl','urllib'],help='仅覆盖资产下载传输')
+    parser.add_argument('--write-transport',choices=['gh','curl'],default='gh',help='显式选择标签/Release写入通道；失败先核对远端，不自动重放')
     args=parser.parse_args()
     try:
-        print(json.dumps(execute(args.manifest,args.output,args.publish,args.public_release,args.verify_downloads,args.upload_transport),ensure_ascii=False,indent=2))
+        print(json.dumps(execute(args.manifest,args.output,args.publish,args.public_release,args.verify_downloads,args.upload_transport,
+                                 metadata_transport=args.metadata_transport,download_transport=args.download_transport,
+                                 write_transport=args.write_transport),ensure_ascii=False,indent=2))
     except Exception as error:
         print(f'停止：{type(error).__name__}: {error}',file=sys.stderr)
         sys.exit(1)

@@ -264,10 +264,17 @@ def urllib_upload(url,path,auth_config,env,*,stall=60,deadline=None,notify=print
 
 
 class Runner:
-    def __init__(self, env, notify=print, upload_transport='curl'):
+    def __init__(self, env, notify=print, upload_transport='curl', *,
+                 metadata_transport=None, download_transport=None, write_transport='gh'):
         self.env, self.notify = env, notify
         if upload_transport not in ('curl','urllib'):raise ValueError('Unknown upload transport')
         self.upload_transport=upload_transport
+        self.metadata_transport=upload_transport if metadata_transport is None else metadata_transport
+        self.download_transport=upload_transport if download_transport is None else download_transport
+        if self.metadata_transport not in ('curl','urllib') or self.download_transport not in ('curl','urllib'):
+            raise ValueError('Unknown metadata/download transport')
+        if write_transport not in ('gh','curl'):raise ValueError('Unknown release write transport')
+        self.write_transport=write_transport
         self.mutations = 0
         self.upload_attempts = 0
         self.download_reports = []
@@ -276,6 +283,8 @@ class Runner:
     def gh(self, argv):
         if argv[:2] == ['gh', 'api'] and ('--method' not in argv or argv[argv.index('--method')+1]=='GET'):
             return self.api_get(argv)
+        if argv[:2] == ['gh', 'api'] and self.write_transport == 'curl':
+            return self.api_write(argv)
         result = subprocess.run(argv, env=self.env, capture_output=True, text=True,
                                 encoding='utf-8', errors='replace', timeout=45)
         if result.returncode:
@@ -301,7 +310,7 @@ class Runner:
             for page in range(1,101):
                 suffix=('&' if '?' in endpoint else '?')+f'page={page}' if paginate else ''
                 url='https://api.github.com/'+endpoint+suffix
-                if self.upload_transport=='urllib':
+                if self.metadata_transport=='urllib':
                     body=urllib_metadata(url,auth,self.env)
                 else:
                     command=[CURL,'--config','-','--http1.1','--compressed','--silent','--show-error',
@@ -328,6 +337,46 @@ class Runner:
         finally:
             del auth
 
+    def api_write(self, argv):
+        """Explicit release-only REST fallback. A missing acknowledgement is never replayed."""
+        if len(argv)!=7 or argv[3]!='--method' or argv[5]!='--input':
+            raise ValueError('REST 写入仅支持发布器的明确 JSON 文件请求')
+        endpoint,method=argv[2],argv[4]
+        match=re.fullmatch(r'repos/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)/(git/refs|releases(?:/[1-9][0-9]*)?)',endpoint)
+        if not match or any(part in ('.','..') for part in endpoint.split('/')):
+            raise ValueError('REST 备用写入只支持指定仓库的标签与 Release')
+        tail=match[3]
+        if not ((method=='POST' and tail in ('git/refs','releases')) or
+                (method=='PATCH' and re.fullmatch(r'releases/[1-9][0-9]*',tail))):
+            raise ValueError('不支持此发布写入方式')
+        payload=Path(argv[6])
+        if payload.stat().st_size>1024*1024 or not isinstance(json.loads(payload.read_text(encoding='utf-8')),dict):
+            raise ValueError('发布 JSON 必须是有界对象')
+        auth=self.auth_config()
+        try:
+            self.mutations+=1
+            command=[CURL,'--config','-','--http1.1','--silent','--show-error',
+                     '--connect-timeout','10','--max-time','45','--request',method,
+                     '--header','Accept: application/vnd.github+json',
+                     '--header','Content-Type: application/json','--data-binary','@'+str(payload),
+                     '--write-out','\n%{http_code}','https://api.github.com/'+endpoint]
+            try:
+                response=subprocess.run(command,input=auth,env=self.env,capture_output=True,text=True,
+                                        encoding='utf-8',errors='replace',timeout=50)
+            except (OSError,subprocess.SubprocessError):
+                raise RuntimeError('写入回执未知；请先核对远端状态，不自动重放请求') from None
+            body,_,status=response.stdout.rpartition('\n')
+            if response.returncode or not status.startswith('2'):
+                raise RuntimeError(f'写入回执未确认（HTTP {status or "unknown"}，curl {response.returncode}）；请先核对远端状态，不自动重放请求')
+            try:
+                if len(body)>8*1024*1024:raise ValueError()
+                json.loads(body or '{}')
+            except ValueError:
+                raise RuntimeError('写入响应不完整；请先核对远端状态，不自动重放请求') from None
+            return body or '{}'
+        finally:
+            del auth
+
     def verify_downloads(self, repo, tag, paths, output, public_release=False):
         self.download_reports=[]
         self.download_failed_asset=None
@@ -350,7 +399,7 @@ class Runner:
                 else:
                     url=f'https://api.github.com/repos/{repo}/releases/assets/{int(asset["id"])}'
                 identity={'repo':repo,'tag':tag,'assetId':asset['id'],'size':asset['size'],'sha256':expected}
-                reports.append(curl_download(url,Path(output)/path.name,identity,auth,self.env,notify=self.notify,backend=self.upload_transport))
+                reports.append(curl_download(url,Path(output)/path.name,identity,auth,self.env,notify=self.notify,backend=self.download_transport))
                 self.download_failed_asset=None
         finally:del auth
         return reports
@@ -358,7 +407,7 @@ class Runner:
     def __call__(self, argv):
         if argv[:3] == ['gh', 'release', 'upload']:
             return self.upload(argv[3], Path(argv[4]), argv[argv.index('--repo') + 1])
-        if '--method' in argv and argv[argv.index('--method') + 1] != 'GET':
+        if '--method' in argv and argv[argv.index('--method') + 1] != 'GET' and self.write_transport=='gh':
             self.mutations += 1
         return self.gh(argv)
 
