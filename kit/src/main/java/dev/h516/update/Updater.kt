@@ -68,7 +68,7 @@ class Updater(private val context: Context) {
                 val releases = http.json("/releases?per_page=20", token)
                 val published = UpdateCatalog.parse(releases)
                 val newest = UpdateCatalog.newest(published)
-                    ?: throw UpdateFailure("还没发布过带更新说明的版本，请稍后再试")
+                    ?: throw UpdateFailure("暂时没有可用的正式更新，请稍后再试")
                 val notes = ReleaseNotes.decode(http.assetText(newest.notesAsset.id, token))
                 val installed = UpdateVerify.installedVersionCode(context)
                 when (val result = UpdateCatalog.decide(notes, newest.assets, installed, UpdateVerify.deviceAbis())) {

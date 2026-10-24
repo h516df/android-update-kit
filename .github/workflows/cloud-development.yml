@@ -33,9 +33,11 @@ jobs:
             https://repo.maven.apache.org/maven2/org/json/json/20250517/json-20250517.jar -o "$json_jar"
           echo "3ea61b2a06e31edf1c91134fe9106b0ebb16628be169f3db75bc7a2b06b45796  $json_jar" | sha256sum --check --status
           kotlinc kit/src/main/java/dev/h516/update/UpdateConfig.kt \
-            kit/src/main/java/dev/h516/update/ReleaseNotes.kt tests/ReleaseNotesCheck.kt \
+            kit/src/main/java/dev/h516/update/ReleaseNotes.kt kit/src/main/java/dev/h516/update/UpdateCatalog.kt \
+            tests/ReleaseNotesCheck.kt tests/UpdateCatalogCheck.kt \
             -cp "$json_jar" -include-runtime -d "$check_jar"
           java -cp "$check_jar:$json_jar" dev.h516.update.ReleaseNotesCheckKt
+          java -cp "$check_jar:$json_jar" dev.h516.update.UpdateCatalogCheckKt
           access_jar="$RUNNER_TEMP/access-check.jar"
           android_jar="$ANDROID_HOME/platforms/android-36/android.jar"
           kotlinc kit/src/main/java/dev/h516/update/UpdateConfig.kt \
