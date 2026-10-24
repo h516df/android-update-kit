@@ -19,13 +19,16 @@ data class ReleaseNotes(
 ) {
     companion object {
         val HEADINGS = listOf("新增", "改进", "修复", "说明")
+        private val VERSION = Regex("[0-9]+(?:\\.[0-9]+)*")
+
+        internal fun isVersion(value: String): Boolean = VERSION.matches(value)
 
         fun decode(text: String): ReleaseNotes {
             val json = JSONObject(text)
             val version = json.getString("versionName")
             val code = json.getInt("versionCode")
             requireUpdate(
-                version.matches(Regex("[0-9]+\\.[0-9]+")) && code > 0,
+                isVersion(version) && code > 0,
                 "更新说明里的版本号不对劲，请打开发布页核对",
             )
             val sections = HEADINGS.mapNotNull { heading ->

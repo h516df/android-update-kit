@@ -28,13 +28,14 @@ internal object UpdateCatalog {
     }
 
     /**
-     * 只认两种东西：tag 形如 `v0.3`，并且挂了 `Jiaoban-v0.3-release-notes.json`。
+     * 只选择正式发行：数字分段 tag（如 v0.3、v1.2.3）与对应的说明附件。
      * 缺一个就不算可更新的版本，宁可不更新也不乱装。
      */
     fun parse(releasesJson: String): List<PublishedUpdate> {
         val releases = JSONArray(releasesJson)
         return (0 until releases.length()).mapNotNull { i ->
             val release = releases.optJSONObject(i) ?: return@mapNotNull null
+            if (release.optBoolean("draft") || release.optBoolean("prerelease")) return@mapNotNull null
             val tag = release.optString("tag_name")
             val version = versionOf(tag) ?: return@mapNotNull null
             val assets = release.optJSONArray("assets") ?: return@mapNotNull null
@@ -55,20 +56,19 @@ internal object UpdateCatalog {
         }
     }
 
-    /** 版本号排序：0.3 -> 3，1.12 -> 112，只比大小不做语义解释。 */
-    fun versionRank(version: String): Int {
-        val parts = version.split(".")
-        if (parts.size != 2) throw UpdateFailure("版本号不对劲，请打开发布页核对")
-        val major = parts[0].toIntOrNull()
-        val minor = parts[1].toIntOrNull()
-        if (major == null || minor == null || major < 0 || minor !in 0..99) {
-            throw UpdateFailure("版本号不对劲，请打开发布页核对")
+    /** Match the publisher's numeric tuple order without packing or integer overflow. */
+    private fun compareVersions(first: String, second: String): Int {
+        val left = first.split(".").map { it.toBigInteger() }
+        val right = second.split(".").map { it.toBigInteger() }
+        for (index in 0 until minOf(left.size, right.size)) {
+            val result = left[index].compareTo(right[index])
+            if (result != 0) return result
         }
-        return major * 100 + minor
+        return left.size.compareTo(right.size)
     }
 
     fun newest(published: List<PublishedUpdate>): PublishedUpdate? =
-        published.maxByOrNull { versionRank(it.version) }
+        published.maxWithOrNull { first, second -> compareVersions(first.version, second.version) }
 
     /**
      * 说明文件拿到手之后才做决定：
@@ -88,10 +88,11 @@ internal object UpdateCatalog {
         return Result.Available(UpdateCandidate(notes, apk, sha))
     }
 
-    /** tag `v0.3` -> `0.3`；不认识的 tag 返回 null。 */
+    /** Keep the exact numeric version for asset names; unsupported tags return null. */
     fun versionOf(tag: String): String? {
-        val m = Regex("^v([0-9]+\\.[0-9]+)$").find(tag.trim()) ?: return null
-        return m.groupValues[1]
+        val value = tag.trim()
+        if (!value.startsWith("v")) return null
+        return value.removePrefix("v").takeIf { ReleaseNotes.isVersion(it) }
     }
 }
 
