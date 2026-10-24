@@ -63,7 +63,9 @@ private fun oauthMessage(error: String): String = when (error) {
  * 所有联网都从这里走。目的地写死：GitHub 的登录/接口/资产域名。
  * 跳转不继承令牌，错误响应体不打印，任何一步都能取消。
  */
-internal class UpdateHttp {
+internal class UpdateHttp(
+    private val connect: (String) -> HttpURLConnection = { URI(it).toURL().openConnection() as HttpURLConnection },
+) {
 
     @Volatile private var connection: HttpURLConnection? = null
     @Volatile private var cancelled = false
@@ -79,7 +81,7 @@ internal class UpdateHttp {
 
     private fun open(url: String, token: String?, binary: Boolean): HttpURLConnection {
         ensureAlive()
-        val c = URI(url).toURL().openConnection() as HttpURLConnection
+        val c = connect(url)
         connection = c
         c.instanceFollowRedirects = false
         c.connectTimeout = 15_000
@@ -118,12 +120,12 @@ internal class UpdateHttp {
         }
     }
 
-    fun json(path: String, token: String): String {
+    fun json(path: String, token: String?): String {
         val url = UpdateConfig.API + path
         requireUpdate(UpdateConfig.apiUrl(url), "更新地址不可信，已停止")
         val c = open(url, token, binary = false)
         try {
-            status(c.responseCode)
+            status(c.responseCode, authenticated = token != null)
             return c.inputStream.use { String(readBounded(it, 2 * 1024 * 1024), Charsets.UTF_8) }
         } finally {
             c.disconnect()
@@ -132,7 +134,7 @@ internal class UpdateHttp {
     }
 
     /** 下载资产（安装包或校验文件）。跳转后不带令牌，且只认 GitHub 的资产域名。 */
-    fun <T> asset(id: Long, token: String, read: (InputStream) -> T): T {
+    fun <T> asset(id: Long, token: String?, read: (InputStream) -> T): T {
         requireUpdate(id > 0, "更新资料不完整，请稍后重试")
         var url = "${UpdateConfig.API}/releases/assets/$id"
         var authorization: String? = token
@@ -146,7 +148,7 @@ internal class UpdateHttp {
                     url = next
                     authorization = null
                 } else {
-                    status(code)
+                    status(code, authenticated = token != null)
                     return c.inputStream.use(read)
                 }
             } finally {
@@ -158,12 +160,12 @@ internal class UpdateHttp {
     }
 
     /** 读一个小的文本资产（更新说明、SHA256 文件）。 */
-    fun assetText(id: Long, token: String): String = asset(id, token) { input ->
+    fun assetText(id: Long, token: String?): String = asset(id, token) { input ->
         String(readBounded(input, 512 * 1024), Charsets.UTF_8)
     }
 
     /** 下载安装包到指定文件，边下边报进度（0-100）。大小必须和发布资料一致。 */
-    fun downloadApk(id: Long, token: String, expectedSize: Long, dest: File, onProgress: (Int) -> Unit) {
+    fun downloadApk(id: Long, token: String?, expectedSize: Long, dest: File, onProgress: (Int) -> Unit) {
         asset(id, token) { input ->
             dest.outputStream().use { out ->
                 val buffer = ByteArray(64 * 1024)
@@ -189,11 +191,12 @@ internal class UpdateHttp {
         }
     }
 
-    private fun status(code: Int) {
+    private fun status(code: Int, authenticated: Boolean = true) {
         if (code in 200..299) return
         throw UpdateFailure(
             when (code) {
-                401, 403 -> "授权失效或权限不足，请重新授权"
+                401, 403 -> if (authenticated) "授权失效或权限不足，请重新授权" else "暂时无法读取公开更新，请稍后重试"
+                429 -> "检查更新过于频繁，请稍后重试"
                 404 -> "没找到更新资料，可能这个版本还没发布"
                 in 500..599 -> "GitHub 暂时连不上，请稍后重试"
                 else -> "检查更新失败，请稍后重试"

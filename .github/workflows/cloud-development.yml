@@ -24,7 +24,7 @@ jobs:
         run: bash .devcontainer/setup.sh
       - name: Check this revision
         run: bash cloud/check.sh
-      - name: Update notes JVM compatibility
+      - name: Updater JVM compatibility
         shell: bash
         run: |
           json_jar="$RUNNER_TEMP/notes-json-20250517.jar"
@@ -36,3 +36,9 @@ jobs:
             kit/src/main/java/dev/h516/update/ReleaseNotes.kt tests/ReleaseNotesCheck.kt \
             -cp "$json_jar" -include-runtime -d "$check_jar"
           java -cp "$check_jar:$json_jar" dev.h516.update.ReleaseNotesCheckKt
+          access_jar="$RUNNER_TEMP/access-check.jar"
+          android_jar="$ANDROID_HOME/platforms/android-36/android.jar"
+          kotlinc kit/src/main/java/dev/h516/update/UpdateConfig.kt \
+            kit/src/main/java/dev/h516/update/UpdateAuth.kt kit/src/main/java/dev/h516/update/UpdateHttp.kt \
+            tests/UpdateAccessCheck.kt -cp "$json_jar:$android_jar" -include-runtime -d "$access_jar"
+          java -cp "$access_jar:$json_jar" dev.h516.update.UpdateAccessCheckKt
