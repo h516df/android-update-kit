@@ -30,7 +30,8 @@ data class ReleaseNotes(
             )
             val sections = HEADINGS.mapNotNull { heading ->
                 val items = json.optJSONArray(heading) ?: return@mapNotNull null
-                requireUpdate(items.length() in 1..10, "更新说明太长或为空，请打开发布页核对")
+                requireUpdate(items.length() in 0..10, "更新说明太长，请打开发布页核对")
+                if (items.length() == 0) return@mapNotNull null
                 heading to (0 until items.length()).map { i ->
                     val line = items.getString(i)
                     requireUpdate(line.length in 1..400, "更新说明里有一条太长了")
