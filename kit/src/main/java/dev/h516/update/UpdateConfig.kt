@@ -9,6 +9,10 @@ internal fun requireUpdate(value: Boolean, message: String = "更新资料不完
     if (!value) throw UpdateFailure(message)
 }
 
+/** Public releases never load or request a private token. */
+internal fun updateAccessToken(publicReleases: Boolean, authenticate: () -> String): String? =
+    if (publicReleases) null else authenticate()
+
 /**
  * 每个项目只改这六行。`tools/install_kit.py` 拷进来的时候会自动替换一次。
  *
@@ -38,6 +42,9 @@ object UpdateConfig {
 
     /** TODO: 发布资产前缀，例如 `Jiaoban`，最终会生成 Jiaoban-v0.3-universal.apk */
     const val APK_PREFIX = "App"
+
+    /** Set by the installer for an explicitly public distribution channel. */
+    const val PUBLIC_RELEASES = false
 
     const val API = "https://api.github.com/repos/" + REPO
     const val VERIFY_URI = "https://github.com/login/device"

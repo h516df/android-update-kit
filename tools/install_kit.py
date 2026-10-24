@@ -46,7 +46,7 @@ def assert_plain_path(path):
             raise SystemExit(f'不写入链接或重解析路径：{part}')
 
 
-def install_plan(project, repo, repo_id, package, prefix, name):
+def install_plan(project, repo, repo_id, package, prefix, name, public_release=False):
     sources = sorted(KIT_SRC.glob('*.kt'))
     if not sources or not any(p.name == 'UpdateConfig.kt' for p in sources):
         raise SystemExit('kit 源码不完整，尚未写入项目。')
@@ -60,6 +60,7 @@ def install_plan(project, repo, repo_id, package, prefix, name):
                 'const val REPO_NAME = "REPO"': f'const val REPO_NAME = "{name}"',
                 'const val PACKAGE = "com.example.app"': f'const val PACKAGE = "{package}"',
                 'const val APK_PREFIX = "App"': f'const val APK_PREFIX = "{prefix}"',
+                'const val PUBLIC_RELEASES = false': f'const val PUBLIC_RELEASES = {str(public_release).lower()}',
             }
             for old, new in replacements.items():
                 if text.count(old) != 1:
@@ -118,6 +119,7 @@ def main():
     parser.add_argument('--prefix', required=True, help='发布资产前缀，例如 Jiaoban')
     parser.add_argument('--name', default='', help='授权页上的仓库名，默认取仓库后半段')
     parser.add_argument('--repo-id', default='', help='已核实的仓库数字 id，默认自动查')
+    parser.add_argument('--public-release', action='store_true', help='已确认的公开更新渠道：检查和下载不要求 GitHub 授权，不改变仓库可见性')
     args = parser.parse_args()
     if not re.fullmatch(r'[A-Za-z0-9_-]+/[A-Za-z0-9_][A-Za-z0-9_.-]*', args.repo):
         parser.error('--repo 必须是 owner/repository')
@@ -134,7 +136,7 @@ def main():
     if not (project / 'app').is_dir():
         raise SystemExit('这不像一个安卓项目（没有 app/ 目录）：' + str(project))
     repo_id = positive_repo_id(args.repo_id) if args.repo_id else repo_id_of(args.repo)
-    plan = install_plan(project, args.repo, repo_id, args.package, args.prefix, name)
+    plan = install_plan(project, args.repo, repo_id, args.package, args.prefix, name, args.public_release)
     preflight(plan)  # 所有冲突、配置和源文件检查均在第一次写入前完成。
     created = 0
     try:

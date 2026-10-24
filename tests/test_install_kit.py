@@ -42,11 +42,21 @@ class InstallKitTest(unittest.TestCase):
         config = self.config.read_text(encoding='utf-8')
         self.assertIn('const val REPO_ID = 1L', config)
         self.assertIn('const val PACKAGE = "cn.sample"', config)
+        self.assertIn('const val PUBLIC_RELEASES = false', config)
         before = self.snapshot()
         times = {p: (self.root / p).stat().st_mtime_ns for p in before}
         self.assertEqual(0, self.call().returncode)
         self.assertEqual(before, self.snapshot())
         self.assertEqual(times, {p: (self.root / p).stat().st_mtime_ns for p in before})
+
+    def test_public_update_mode_is_explicit_repeatable_and_does_not_overwrite_private_config(self):
+        self.assertEqual(0, self.call('--public-release').returncode)
+        self.assertIn('const val PUBLIC_RELEASES = true', self.config.read_text(encoding='utf-8'))
+        before = self.snapshot()
+        self.assertEqual(0, self.call('--public-release').returncode)
+        self.assertEqual(before, self.snapshot())
+        self.assertNotEqual(0, self.call().returncode)
+        self.assertEqual(before, self.snapshot())
 
     def test_changed_kotlin_aborts_before_any_file_write(self):
         self.put('app/src/main/java/dev/h516/update/Updater.kt', b'project custom updater')

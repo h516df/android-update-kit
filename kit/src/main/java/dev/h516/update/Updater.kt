@@ -63,7 +63,7 @@ class Updater(private val context: Context) {
         set(UpdateState.Checking)
         io.execute {
             try {
-                val token = tokenOrAuthorize()
+                val token = updateAccessToken(UpdateConfig.PUBLIC_RELEASES) { tokenOrAuthorize() }
                 val releases = http.json("/releases?per_page=20", token)
                 val published = UpdateCatalog.parse(releases)
                 val newest = UpdateCatalog.newest(published)
@@ -94,7 +94,9 @@ class Updater(private val context: Context) {
         set(UpdateState.Downloading(0))
         io.execute {
             try {
-                val token = tokens.load()?.access ?: throw UpdateFailure("授权失效了，请重新检查更新")
+                val token = updateAccessToken(UpdateConfig.PUBLIC_RELEASES) {
+                    tokens.load()?.access ?: throw UpdateFailure("授权失效了，请重新检查更新")
+                }
                 val dir = File(context.cacheDir, "updates").apply { mkdirs() }
                 dir.listFiles()?.forEach { it.delete() }
                 val dest = File(dir, target.apk.name)
