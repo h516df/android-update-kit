@@ -82,14 +82,81 @@ class ReadbackTests(unittest.TestCase):
               'assets':[{'path':self.path.name,'sha256':self.identity['sha256']}]}
         manifest.write_text(json.dumps(spec))
         output=self.path.parent/'state';output.mkdir()
+        (output/'audit.json').write_text(json.dumps({'auditStatus':'failed','errorType':'OldFailure'}))
         with patch.object(release_assets,'publish_verified',return_value={}) as publish:
-            release_assets.execute(manifest,output)
+            result=release_assets.execute(manifest,output)
             self.assertTrue(publish.call_args.kwargs['verify_only'])
             self.assertFalse(publish.call_args.kwargs['public_release'])
+            self.assertEqual(result['auditStatus'],'completed')
+            self.assertEqual(json.loads((output/'audit.json').read_text())['auditStatus'],'completed')
+            self.assertNotIn('errorType',result)
+            self.assertFalse(result['downloadVerificationRequested'])
         self.path.write_bytes(b'changed')
         with patch.object(release_assets,'Runner') as runner:
             with self.assertRaisesRegex(RuntimeError,'发生变化'):release_assets.execute(manifest,output,publish=True)
             runner.assert_not_called()
+
+    def test_download_failure_replaces_old_success_and_keeps_completed_assets(self):
+        self.path.write_bytes(self.content)
+        second=self.path.parent/'second.apk';second.write_bytes(self.content)
+        manifest=self.path.parent/'release.json'
+        manifest.write_text(json.dumps({'repo':'owner/app','tag':'v1.0','target':'a'*40,'title':'t','body':'b',
+            'assets':[{'path':p.name,'sha256':self.identity['sha256']} for p in (self.path,second)]}))
+        output=self.path.parent/'state';output.mkdir()
+        audit=output/'audit.json';audit.write_text(json.dumps({'status':'published','auditStatus':'completed','oldSuccess':True}))
+        runner=transport.Runner(self.env,notify=lambda text:None)
+        runner.gh=lambda argv:json.dumps({'draft':False,'assets':[
+            {'name':p.name,'id':i,'state':'uploaded','size':len(self.content),'digest':'sha256:'+self.identity['sha256'],
+             'browser_download_url':f'https://github.com/owner/app/releases/download/v1.0/{p.name}'}
+            for i,p in enumerate((self.path,second),1)]})
+        partial=output/'downloads/second.apk.part'
+        def download(url,path,identity,*args,**kwargs):
+            if path.name==self.path.name:
+                path.parent.mkdir(parents=True,exist_ok=True);path.write_bytes(self.content)
+                return {'name':path.name,'downloadedThisRun':True,'size':len(self.content),'sha256':self.identity['sha256']}
+            partial.write_bytes(self.content[:1000])
+            partial.with_name(partial.name+'.json').write_text(json.dumps(identity))
+            raise RuntimeError('SYNTHETIC_PRIVATE_DIAGNOSTIC')
+        with patch.object(release_assets,'Runner',return_value=runner), \
+             patch.object(release_assets,'publish_verified',return_value={'status':'published'}), \
+             patch.object(transport,'curl_download',side_effect=download):
+            with self.assertRaises(RuntimeError):
+                release_assets.execute(manifest,output,public_release=True,verify_downloads=True)
+        result=json.loads(audit.read_text())
+        self.assertEqual(result['auditStatus'],'failed')
+        self.assertEqual(result['status'],'failed')
+        self.assertEqual(result['publicationStatus'],'published')
+        self.assertEqual(result['failedDownload'],'second.apk')
+        self.assertEqual([row['name'] for row in result['downloads']],['fixture.apk'])
+        self.assertFalse(result['downloadVerificationComplete'])
+        self.assertEqual(result['nextAction'],'resume_verified_downloads')
+        self.assertEqual(partial.read_bytes(),self.content[:1000])
+        self.assertNotIn('SYNTHETIC_PRIVATE_DIAGNOSTIC',audit.read_text())
+        self.assertNotIn('oldSuccess',result)
+
+    def test_remote_failure_has_current_receipt_without_repeating_mutation(self):
+        self.path.write_bytes(self.content)
+        manifest=self.path.parent/'release.json'
+        manifest.write_text(json.dumps({'repo':'owner/app','tag':'v1.0','target':'a'*40,'title':'t','body':'b',
+            'assets':[{'path':self.path.name,'sha256':self.identity['sha256']}]}))
+        output=self.path.parent/'state';output.mkdir();audit=output/'audit.json'
+        audit.write_text(json.dumps({'auditStatus':'completed','status':'published'}))
+        runner=transport.Runner(self.env)
+        def fail(*args,**kwargs):
+            self.assertEqual(json.loads(audit.read_text())['auditStatus'],'in_progress')
+            runner.mutations=1;runner.upload_attempts=1
+            raise OSError('SYNTHETIC_PRIVATE_DIAGNOSTIC')
+        with patch.object(release_assets,'Runner',return_value=runner), \
+             patch.object(release_assets,'publish_verified',side_effect=fail) as publish:
+            with self.assertRaises(OSError):release_assets.execute(manifest,output,publish=True)
+        result=json.loads(audit.read_text())
+        self.assertEqual(result['auditStatus'],'failed')
+        self.assertEqual(result['stage'],'publication_verification')
+        self.assertEqual(result['nextAction'],'inspect_remote_side_effects_before_retry')
+        self.assertEqual(result['remoteMutationRequests'],1)
+        self.assertEqual(result['uploadAttempts'],1)
+        self.assertNotIn('SYNTHETIC_PRIVATE_DIAGNOSTIC',audit.read_text())
+        self.assertEqual(publish.call_count,1)
 
     @unittest.skipUnless(os.name=='nt','Windows filename canonicalization')
     def test_manifest_preserves_declared_asset_case_on_windows(self):
