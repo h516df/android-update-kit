@@ -271,7 +271,7 @@ class Runner:
         self.upload_transport=upload_transport
         self.metadata_transport=upload_transport if metadata_transport is None else metadata_transport
         self.download_transport=upload_transport if download_transport is None else download_transport
-        if self.metadata_transport not in ('curl','urllib') or self.download_transport not in ('curl','urllib'):
+        if self.metadata_transport not in ('curl','urllib','gh') or self.download_transport not in ('curl','urllib'):
             raise ValueError('Unknown metadata/download transport')
         if write_transport not in ('gh','curl'):raise ValueError('Unknown release write transport')
         self.write_transport=write_transport
@@ -292,8 +292,14 @@ class Runner:
             return self.api_get(argv)
         if argv[:2] == ['gh', 'api'] and self.write_transport == 'curl':
             return self.api_write(argv)
-        result = subprocess.run(argv, env=self.env, capture_output=True, text=True,
-                                encoding='utf-8', errors='replace', timeout=45)
+        return self.cli(argv)
+
+    def cli(self, argv, timeout=45):
+        try:
+            result = subprocess.run(argv, env=self.env, capture_output=True, text=True,
+                                    encoding='utf-8', errors='replace', timeout=timeout)
+        except subprocess.TimeoutExpired:
+            raise RuntimeError('GitHub 命令超时；不自动重放请求，不记录认证或临时地址') from None
         if result.returncode:
             raise RuntimeError(f'GitHub 命令失败（退出码 {result.returncode}）；不记录原始响应或认证数据')
         return result.stdout
@@ -312,12 +318,14 @@ class Runner:
         page_size=int(parse_qs(urlsplit('https://api.github.com/'+endpoint).query).get('per_page',['30'])[0])
         if not 1<=page_size<=100:raise RuntimeError('分页大小不合法')
         pages=[]
-        auth=self.auth_config()
+        auth=None if self.metadata_transport=='gh' else self.auth_config()
         try:
             for page in range(1,101):
                 suffix=('&' if '?' in endpoint else '?')+f'page={page}' if paginate else ''
                 url='https://api.github.com/'+endpoint+suffix
-                if self.metadata_transport=='urllib':
+                if self.metadata_transport=='gh':
+                    body=self.cli(['gh','api',endpoint+suffix],timeout=5)
+                elif self.metadata_transport=='urllib':
                     body=urllib_metadata(url,auth,self.env)
                 else:
                     command=[CURL,'--config','-','--http1.1','--compressed','--silent','--show-error',

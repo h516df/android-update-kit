@@ -168,5 +168,27 @@ class TransferChecks(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError,'读取失败'):instance.api_get(['gh','api','repos/owner/app'])
 
 
+    def test_cli_metadata_preserves_bounded_pagination_without_extracting_token(self):
+        instance=runner.Runner({},metadata_transport='gh',write_transport='curl')
+        replies=[subprocess.CompletedProcess([],0,json.dumps([{},{}]),''),subprocess.CompletedProcess([],0,'[]','')]
+        with patch.object(instance,'auth_config',side_effect=AssertionError('CLI keeps its existing login')),patch.object(runner.subprocess,'run',side_effect=replies) as calls:
+            result=instance(['gh','api','repos/owner/app/releases?per_page=2','--paginate','--slurp'])
+        self.assertEqual([[{},{}],[]],json.loads(result))
+        self.assertEqual(['gh','api','repos/owner/app/releases?per_page=2&page=1'],calls.call_args_list[0].args[0])
+        self.assertTrue(all(c.kwargs['timeout']==5 and 'input' not in c.kwargs for c in calls.call_args_list))
+
+    def test_cli_metadata_failure_does_not_retry_or_expose_raw_output(self):
+        instance=runner.Runner({},metadata_transport='gh')
+        with patch.object(runner.subprocess,'run',return_value=subprocess.CompletedProcess([],1,'fixture-sensitive-output','fixture-private-url')) as call:
+            with self.assertRaisesRegex(RuntimeError,'不记录原始响应') as error:
+                instance(['gh','api','repos/owner/app'])
+        self.assertNotIn('fixture-sensitive',str(error.exception))
+        self.assertNotIn('fixture-private',str(error.exception))
+        self.assertEqual(1,call.call_count)
+        with patch.object(runner.subprocess,'run') as call:
+            with self.assertRaisesRegex(RuntimeError,'明确仓库'):
+                instance(['gh','api','https://example.invalid/resource'])
+        call.assert_not_called()
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)
