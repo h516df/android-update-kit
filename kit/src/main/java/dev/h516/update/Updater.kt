@@ -10,6 +10,7 @@ import androidx.compose.runtime.setValue
 import androidx.core.content.FileProvider
 import java.io.File
 import java.util.concurrent.Executors
+import java.util.UUID
 
 /** 更新界面要显示的状态。 */
 sealed class UpdateState {
@@ -95,17 +96,18 @@ class Updater(private val context: Context) {
         val http = run.http
         set(UpdateState.Downloading(0), run)
         run.attach(io.submit {
+            var unverified: File? = null
             try {
                 run.ensureAlive()
                 val token = updateAccessToken(UpdateConfig.PUBLIC_RELEASES) {
                     tokens.load()?.access ?: throw UpdateFailure("授权失效了，请重新检查更新")
                 }
                 val dir = File(context.cacheDir, "updates").apply { mkdirs() }
-                dir.listFiles()?.forEach { it.delete() }
-                val dest = File(dir, target.apk.name)
+                val dest = File(dir, "update-${UUID.randomUUID()}.apk")
                 http.downloadApk(target.apk.id, token, target.apk.size, dest) { percent ->
                     set(UpdateState.Downloading(percent), run)
                 }
+                unverified = dest
                 val expectedSha = target.shaFile?.let { UpdateVerify.parseShaFile(http.assetText(it.id, token)) }
                     ?: target.apk.apiDigest
                     ?: throw UpdateFailure("发布资料里缺校验值，请稍后再试")
@@ -113,12 +115,15 @@ class Updater(private val context: Context) {
                 UpdateVerify.verifyArchive(context, dest, target.notes.code)
                 run.ensureAlive()
                 set(UpdateState.ReadyToInstall(dest), run)
+                unverified = null
             } catch (e: UpdateFailure) {
                 set(UpdateState.Failed(e.userMessage), run)
             } catch (e: InterruptedException) {
                 set(UpdateState.Idle, run)
             } catch (e: Exception) {
                 set(UpdateState.Failed("下载或校验失败，请稍后重试"), run)
+            } finally {
+                unverified?.delete()
             }
         })
     }

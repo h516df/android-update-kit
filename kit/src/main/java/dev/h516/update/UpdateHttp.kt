@@ -166,28 +166,35 @@ internal class UpdateHttp(
 
     /** 下载安装包到指定文件，边下边报进度（0-100）。大小必须和发布资料一致。 */
     fun downloadApk(id: Long, token: String?, expectedSize: Long, dest: File, onProgress: (Int) -> Unit) {
-        asset(id, token) { input ->
-            dest.outputStream().use { out ->
-                val buffer = ByteArray(64 * 1024)
-                var written = 0L
-                var lastPercent = -1
-                while (true) {
-                    ensureAlive()
-                    val n = input.read(buffer)
-                    if (n < 0) break
-                    out.write(buffer, 0, n)
-                    written += n
-                    requireUpdate(written <= UpdateConfig.MAX_APK, "安装包异常偏大，已停止下载")
-                    if (expectedSize > 0) {
+        requireUpdate(expectedSize in 1..UpdateConfig.MAX_APK, "安装包大小异常，请重新检查更新")
+        requireUpdate(!dest.exists(), "安装包暂存位置被占用，请重新检查更新")
+        val staged = File.createTempFile(".update-", ".part", dest.absoluteFile.parentFile)
+        try {
+            asset(id, token) { input ->
+                staged.outputStream().use { out ->
+                    val buffer = ByteArray(64 * 1024)
+                    var written = 0L
+                    var lastPercent = -1
+                    while (true) {
+                        ensureAlive()
+                        val n = input.read(buffer)
+                        if (n < 0) break
+                        requireUpdate(written + n <= expectedSize, "安装包大小与发布资料不符，已停止下载")
+                        out.write(buffer, 0, n)
+                        written += n
                         val percent = (written * 100 / expectedSize).toInt().coerceIn(0, 100)
                         if (percent != lastPercent) {
                             lastPercent = percent
                             onProgress(percent)
                         }
                     }
+                    requireUpdate(written == expectedSize, "安装包下载不完整，请重试")
                 }
-                requireUpdate(written == expectedSize, "安装包下载不完整，请重试")
             }
+            ensureAlive()
+            requireUpdate(!dest.exists() && staged.renameTo(dest), "保存安装包失败，请重试")
+        } finally {
+            staged.delete()
         }
     }
 
