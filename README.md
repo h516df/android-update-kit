@@ -96,6 +96,8 @@ python scripts\publish_release.py --target <已推送的完整提交SHA> --signe
 
 已经验收过的包用 `--no-build --prepared-apk <确切APK路径>` 复用，不把最后一次构建自动当成目标包。重复运行会核对原草稿并只上传缺少的文件；同名文件大小/摘要不一致、未知资产、标签提交不一致时停止，不删除或覆盖。已发布版本只读核对；`--verify-only` 显式禁止远端写入，并要求提供已验收包及原目标提交。历史版本核对不会把旧版提升为 latest。
 
+共用分发仓库也可使用 `<appId>-stable-v<数字版本>` 标签（appId 为小写字母、数字与连字符）。版本防倒退仅比较同一 App 的正式版本；此类发布明确设置 `make_latest=false`，不抢占仓库整体 latest。普通 `v<数字版本>` 的发布行为不变。
+
 验收：`python -m unittest discover -s tests -v`，只使用隔离 fixture 和模拟 GitHub，不登录账号或写真实发布；实际发布仍须按项目证据核对安装包和目标设备。
 
 ## 目录

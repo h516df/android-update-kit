@@ -193,5 +193,40 @@ class ReleaseRecoveryTest(unittest.TestCase):
         self.assertEqual(1, fake.writes.count(('upload', self.assets[1].name)))
 
 
+    def test_app_scoped_release_preserves_repository_latest(self):
+        class ScopedGitHub(FakeGitHub):
+            def __call__(self, args):
+                if args[2].endswith('/releases/latest'):
+                    raise AssertionError('An app stream must not depend on repository latest')
+                return super().__call__(args)
+        fake = ScopedGitHub(self.assets)
+        result = remote.publish_verified('owner/app', 'reader-stable-v0.3', TARGET,
+            '更新', '说明', self.assets, self.root/'scoped', fake)
+        self.assertEqual('reader', result['app_scope'])
+        self.assertEqual('false', fake.release['make_latest'])
+        self.assertIsNone(result['latest_verified'])
+
+    def test_app_version_guard_only_compares_same_app(self):
+        class StreamGitHub(FakeGitHub):
+            existing = []
+            def __call__(self, args):
+                if args[2].startswith('repos/owner/app/releases?'):
+                    return json.dumps([self.existing])
+                return super().__call__(args)
+        for other_tag, blocked in [('other-stable-v99.0', False), ('v99.0', False),
+                                   ('reader-stable-v0.4', True), ('reader-stable-v0.3.0', True)]:
+            with self.subTest(other_tag=other_tag):
+                fake = StreamGitHub(self.assets)
+                fake.existing = [dict(tag_name=other_tag, draft=False, prerelease=False)]
+                action = lambda: remote.publish_verified('owner/app', 'reader-stable-v0.3', TARGET,
+                    '更新', '说明', self.assets, self.root/'streams', fake)
+                if blocked:
+                    with self.assertRaisesRegex(RuntimeError, '倒退'):
+                        action()
+                    self.assertEqual([], fake.writes)
+                else:
+                    action()
+                    self.assertEqual('false', fake.release['make_latest'])
+
 if __name__ == '__main__':
     unittest.main()
