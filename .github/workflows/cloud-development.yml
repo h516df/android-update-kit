@@ -43,6 +43,7 @@ jobs:
           kotlinc kit/src/main/java/dev/h516/update/UpdateConfig.kt \
             kit/src/main/java/dev/h516/update/UpdateAuth.kt kit/src/main/java/dev/h516/update/UpdateHttp.kt \
             kit/src/main/java/dev/h516/update/UpdateRun.kt tests/UpdateAccessCheck.kt tests/UpdateRunCheck.kt \
-            -cp "$json_jar:$android_jar" -include-runtime -d "$access_jar"
+            tests/UpdateDownloadCheck.kt -cp "$json_jar:$android_jar" -include-runtime -d "$access_jar"
           java -cp "$access_jar:$json_jar" dev.h516.update.UpdateAccessCheckKt
           java -cp "$access_jar:$json_jar" dev.h516.update.UpdateRunCheckKt
+          java -cp "$access_jar:$json_jar" dev.h516.update.UpdateDownloadCheckKt
