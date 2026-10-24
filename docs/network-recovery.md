@@ -2,6 +2,14 @@
 
 本流程给执行 Agent 使用。用户仍只需下载和使用，不需要搬日志、接手机或配置令牌。
 
+## 先读本次状态，再接续
+
+共享入口完成本地资产校验后，在任何远端操作前原子更新 `release-state/audit.json` 为 `auditStatus=in_progress`，替换旧成功；正常完成为 completed，远端或下载异常为 failed。in_progress 只表示未取得终态，不能证明进程仍在运行。接续以本次命令结果、当前资产身份及该回执为准，不单独复用旧 publication.json 的成功；本地资产校验失败不代表旧发行失效，也不能以旧回执声称当前文件已通过。
+
+下载失败时，回执保留已完成的 downloads、publicationStatus、failedDownload 和实际变更/上传次数，下一步为 resume_verified_downloads；已有完整文件仍核对摘要后复用，归属一致的部分文件沿原 Range 接续。publicationStatus=published 不等于下载完成，另看 downloadVerificationRequested 与 downloadVerificationComplete。下载前查询失败时 failedDownload 可以为空，应先恢复读取；回执不写原始异常、认证或临时签名地址。
+
+发布阶段失败时 nextAction=inspect_remote_side_effects_before_retry；先核对远端，再决定是否继续。此改进不增加自动上传重试、覆盖、删除或后台续跑。仍复用原清单与输出目录，保留原签名和已有部分文件。
+
 先使用共享入口的默认 curl；确认远端副作用后可显式改用 `--transport urllib`。同一路径反复整包中断时，停止从头碰运气，不把 TLS 实现差异当成已证实根因。本机保留已验收 APK、草稿身份和传输记录，改用下面的仓库内交付路径。不得清理无关历史文件或更改 VPN。
 
 ## 前置核对

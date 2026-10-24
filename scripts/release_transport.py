@@ -270,6 +270,8 @@ class Runner:
         self.upload_transport=upload_transport
         self.mutations = 0
         self.upload_attempts = 0
+        self.download_reports = []
+        self.download_failed_asset = None
 
     def gh(self, argv):
         if argv[:2] == ['gh', 'api'] and ('--method' not in argv or argv[argv.index('--method')+1]=='GET'):
@@ -327,13 +329,16 @@ class Runner:
             del auth
 
     def verify_downloads(self, repo, tag, paths, output, public_release=False):
+        self.download_reports=[]
+        self.download_failed_asset=None
         release=json.loads(self.gh(['gh','api',f'repos/{repo}/releases/tags/{tag}']))
         if release['draft']:raise RuntimeError('只回读正式发布')
         assets={a['name']:a for a in release['assets']}
-        reports=[]
+        reports=self.download_reports
         auth='' if public_release else self.auth_config()
         try:
             for path in paths:
+                self.download_failed_asset=path.name
                 asset=assets[path.name]
                 expected=sha(path)
                 if asset['state']!='uploaded' or asset['size']!=path.stat().st_size or asset['digest']!='sha256:'+expected:
@@ -346,6 +351,7 @@ class Runner:
                     url=f'https://api.github.com/repos/{repo}/releases/assets/{int(asset["id"])}'
                 identity={'repo':repo,'tag':tag,'assetId':asset['id'],'size':asset['size'],'sha256':expected}
                 reports.append(curl_download(url,Path(output)/path.name,identity,auth,self.env,notify=self.notify,backend=self.upload_transport))
+                self.download_failed_asset=None
         finally:del auth
         return reports
 
