@@ -93,7 +93,7 @@ if __name__=='__main__':
     parser.add_argument('--public-release',action='store_true')
     parser.add_argument('--verify-downloads',action='store_true',help='实际下载并按本地已验收资产核验；支持接续自己的部分下载')
     parser.add_argument('--transport','--upload-transport',dest='upload_transport',choices=['curl','urllib'],default='curl',help='显式选择元数据、上传及回读传输；不自动重传')
-    parser.add_argument('--metadata-transport',choices=['curl','urllib'],help='仅覆盖只读元数据传输')
+    parser.add_argument('--metadata-transport',choices=['curl','urllib','gh'],help='仅覆盖只读元数据传输；gh复用现有CLI，不自动切换')
     parser.add_argument('--download-transport',choices=['curl','urllib'],help='仅覆盖资产下载传输')
     parser.add_argument('--write-transport',choices=['gh','curl'],default='gh',help='显式选择标签/Release写入通道；失败先核对远端，不自动重放')
     args=parser.parse_args()
