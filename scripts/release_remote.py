@@ -114,6 +114,8 @@ def publish_verified(repo, tag, target, title, body, assets, output, run, verify
                                    'name': title, 'body': body, 'draft': True,
                                    'prerelease': False}, 'create-release.json')
     release_id = remote['id']
+    if hasattr(run, 'select_release'):
+        run.select_release(repo, tag, target, release_id)
 
     def current():
         result = get(f'releases/{release_id}')

@@ -121,6 +121,28 @@ class TransferChecks(unittest.TestCase):
         transfer.assert_not_called()
         self.assertEqual(0, instance.mutations)
 
+    def test_selected_draft_uses_its_id_without_eventually_consistent_list(self):
+        instance=runner.Runner({},notify=lambda _:None)
+        target='a'*40
+        instance.select_release('h516df/fixture','v1.0',target,123)
+        expected={'name':self.file.name,'state':'uploaded','size':self.file.stat().st_size,'digest':'sha256:'+runner.sha(self.file)}
+        replies=[json.dumps(dict(id=123,tag_name='v1.0',target_commitish=target,draft=True,assets=[])),
+                 'fixture-not-a-real-token',json.dumps({'assets':[expected]})]
+        with patch.object(instance,'gh',side_effect=replies) as gh,patch.object(runner,'curl_upload',return_value=({'status':'201'},'')) as transfer:
+            instance.upload('v1.0',self.file,'h516df/fixture')
+        self.assertEqual('repos/h516df/fixture/releases/123',gh.call_args_list[0].args[0][2])
+        self.assertEqual(1,transfer.call_count)
+
+    def test_selected_draft_mismatch_stops_before_auth_or_transfer(self):
+        instance=runner.Runner({})
+        instance.select_release('h516df/fixture','v1.0','a'*40,123)
+        with patch.object(instance,'gh',return_value=json.dumps(dict(id=123,tag_name='v2.0',target_commitish='a'*40,draft=True,assets=[]))) as gh,patch.object(runner,'curl_upload') as transfer:
+            with self.assertRaisesRegex(RuntimeError,'身份发生变化'):
+                instance.upload('v1.0',self.file,'h516df/fixture')
+        self.assertEqual(1,gh.call_count)
+        transfer.assert_not_called()
+        self.assertEqual(0,instance.mutations)
+
     def test_process_error_after_start_also_rechecks_without_retry(self):
         instance = runner.Runner({}, notify=lambda _: None)
         replies = [json.dumps([[{'id': 123, 'tag_name':'v1.0', 'draft': True, 'assets': []}]]),
