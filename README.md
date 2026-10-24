@@ -100,6 +100,8 @@ python scripts\publish_release.py --target <已推送的完整提交SHA> --signe
 
 验收：`python -m unittest discover -s tests -v`，只使用隔离 fixture 和模拟 GitHub，不登录账号或写真实发布；实际发布仍须按项目证据核对安装包和目标设备。
 
+发布器把已确认的 Release ID、标签和目标提交传给上传器，上传前直接回读这个 ID。新建草稿尚未出现在列表时，也不用重新创建或等待列表刷新；身份不符、已有同名资产或未知占位仍停止。旧的独立上传调用保留原列表检查。
+
 ## 目录
 
 ```

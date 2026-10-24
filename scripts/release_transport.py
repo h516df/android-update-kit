@@ -279,6 +279,13 @@ class Runner:
         self.upload_attempts = 0
         self.download_reports = []
         self.download_failed_asset = None
+        self.selected_releases = {}
+
+    def select_release(self, repo, tag, target, release_id):
+        """Keep the publisher's exact identity; release-list caches may lag creation."""
+        if not re.fullmatch(r'[\w.-]+/[\w.-]+', repo) or not re.fullmatch(r'[a-f0-9]{40}', target) or type(release_id) is not int or release_id < 1:
+            raise ValueError('发布身份不合法')
+        self.selected_releases[(repo, tag)] = (release_id, target)
 
     def gh(self, argv):
         if argv[:2] == ['gh', 'api'] and ('--method' not in argv or argv[argv.index('--method')+1]=='GET'):
@@ -416,10 +423,17 @@ class Runner:
         size = path.stat().st_size
         # Drafts are not reliably returned by the tag endpoint. List them with the
         # authenticated releases API, then upload only to the exact matching draft.
-        pages = json.loads(self.gh(['gh','api',f'repos/{repo}/releases?per_page=20','--paginate','--slurp']))
-        matches=[r for page in pages for r in page if r.get('tag_name')==tag]
-        if len(matches)!=1:raise RuntimeError('草稿版本身份不明确')
-        release=matches[0]
+        selected = self.selected_releases.get((repo, tag))
+        if selected:
+            release_id, target = selected
+            release = json.loads(self.gh(['gh','api',f'repos/{repo}/releases/{release_id}']))
+            if release.get('id') != release_id or release.get('tag_name') != tag or release.get('target_commitish') != target:
+                raise RuntimeError('指定草稿身份发生变化，停止上传')
+        else:
+            pages = json.loads(self.gh(['gh','api',f'repos/{repo}/releases?per_page=20','--paginate','--slurp']))
+            matches=[r for page in pages for r in page if r.get('tag_name')==tag]
+            if len(matches)!=1:raise RuntimeError('草稿版本身份不明确')
+            release=matches[0]
         if not release['draft'] or any(a['name'] == path.name for a in release['assets']):
             raise RuntimeError('仅上传草稿中缺失的资产；现有资产或占位均不删除、不覆盖')
         token = self.gh(['gh', 'auth', 'token', '--hostname', 'github.com']).strip()
