@@ -20,7 +20,20 @@ def require(condition, message):
 
 def publish_verified(repo, tag, target, title, body, assets, output, run, verify_only=False, public_release=False):
     require(bool(re.fullmatch(r'[\w.-]+/[\w.-]+', repo)), '仓库名不合法')
-    require(bool(re.fullmatch(r'v[0-9]+(?:\.[0-9]+)*', tag)), '版本标签不合法')
+    tag_match = re.fullmatch(r'(?:(?P<app>[a-z0-9]+(?:-[a-z0-9]+)*)-stable-)?v(?P<version>[0-9]+(?:\.[0-9]+)*)', tag)
+    require(bool(tag_match), '版本标签不合法')
+    app_scope = tag_match.group('app')
+    stream_prefix = app_scope + '-stable-v' if app_scope else 'v'
+
+    def stream_version(value):
+        if not value.startswith(stream_prefix):
+            return None
+        numeric = value[len(stream_prefix):]
+        return tuple(map(int, numeric.split('.'))) if re.fullmatch(r'[0-9]+(?:\.[0-9]+)*', numeric) else None
+
+    def version_at_least(left, right):
+        width = max(len(left), len(right))
+        return left + (0,) * (width-len(left)) >= right + (0,) * (width-len(right))
     require(bool(re.fullmatch(r'[a-f0-9]{40}', target)), '必须指定完整提交 SHA')
     assets = [Path(path) for path in assets]
     require(bool(assets) and len({p.name for p in assets}) == len(assets), '资产缺失或重名')
@@ -56,12 +69,10 @@ def publish_verified(repo, tag, target, title, body, assets, output, run, verify
     require(len(matches) <= 1, '发现重复版本，停止')
     remote = matches[0] if matches else None
     if remote is None:
-        def version(value):
-            return tuple(map(int,value[1:].split('.')))
         newer=[r['tag_name'] for page in pages for r in page
                if not r.get('draft') and not r.get('prerelease') and
-               re.fullmatch(r'v[0-9]+(?:\.[0-9]+)*',r.get('tag_name','')) and
-               version(r['tag_name'])>=version(tag)]
+               stream_version(r.get('tag_name','')) is not None and
+               version_at_least(stream_version(r['tag_name']), stream_version(tag))]
         require(not newer,'已有相同或更高正式版本，拒绝倒退发布')
     if remote:
         require(remote.get('target_commitish') == target and not remote.get('prerelease'),
@@ -126,7 +137,7 @@ def publish_verified(repo, tag, target, title, body, assets, output, run, verify
         check_assets(fresh, complete=True)
         payload = output / 'publish-release.json'
         payload.write_text(json.dumps({'draft': False, 'prerelease': False,
-                                      'make_latest': 'true', 'name': title, 'body': body},
+                                      'make_latest': 'false' if app_scope else 'true', 'name': title, 'body': body},
                                      ensure_ascii=False), encoding='utf-8')
         get(f'releases/{release_id}', '--method', 'PATCH', '--input', str(payload))
 
@@ -137,7 +148,7 @@ def publish_verified(repo, tag, target, title, body, assets, output, run, verify
     # GET /latest returns 404 when a repository has only older/non-latest releases.
     # The normal publication path must have a latest release; read-only historical checks
     # inspect the list instead, and never promote an old version.
-    if was_draft and not verify_only:
+    if was_draft and not verify_only and not app_scope:
         latest = get('releases/latest')
         require(latest['id'] == release_id, '最新更新渠道未指向本次发布')
         latest_verified = True
@@ -146,6 +157,7 @@ def publish_verified(repo, tag, target, title, body, assets, output, run, verify
     receipt = {'tag': tag, 'target': target, 'url': final['html_url'],
                'published_at': final['published_at'], 'status': 'published',
                'read_only': not was_draft or verify_only, 'latest_verified': latest_verified,
+               'app_scope': app_scope,
                'assets': [{'name': a['name'], 'size': a['size'], 'digest': a['digest']}
                           for a in final['assets']]}
     (output / 'publication.json').write_text(json.dumps(receipt, ensure_ascii=False, indent=2), encoding='utf-8')
